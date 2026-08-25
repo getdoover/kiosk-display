@@ -39,7 +39,7 @@ class KioskDisplayApplication(Application):
         """Detect the display, then bring up the session on it."""
         await self.tags.showing.set(False)
 
-        stopped = await stop_conflicting_services(list(self.config.stop_services.value or []))
+        stopped = await stop_conflicting_services(self._conflicting_service_names())
         if stopped:
             log.info("Stopped before starting: %s", ", ".join(stopped))
 
@@ -81,6 +81,20 @@ class KioskDisplayApplication(Application):
         await self.tags.url.set(self.config.url.value or "")
         await self.tags.last_error.set("")
         await self.tags.showing.set(True)
+
+    def _conflicting_service_names(self) -> list[str]:
+        """Names out of the `Array` config element.
+
+        An Array hands back its `ConfigElement` children, not plain strings —
+        each one has to be unwrapped. Getting this wrong crashed the app on its
+        first real deployment, because the tests had passed strings directly.
+        """
+        names = []
+        for item in self.config.stop_services.value or []:
+            name = getattr(item, "value", item)
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+        return names
 
     #: The browser runs on the distro Python rather than the app's venv — see
     #: the Dockerfile. Overridable so it can be pointed at a dev checkout.

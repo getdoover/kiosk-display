@@ -57,3 +57,40 @@ class TestSessionEnvironment:
 
     def test_points_the_compositor_at_the_right_card(self):
         assert session_environment(make())["WLR_DRM_DEVICES"] == "/dev/dri/card1"
+
+
+class TestConflictingServiceNames:
+    """`config.Array` hands back ConfigElement children, not plain strings.
+
+    Assuming otherwise crashed the app on its first real deployment — the unit
+    tests had been passing strings straight in, so they never saw it.
+    """
+
+    @staticmethod
+    def _names(raw):
+        # The unwrapping logic from KioskDisplayApplication, exercised without
+        # needing a live pydoover config object.
+        names = []
+        for item in raw or []:
+            name = getattr(item, "value", item)
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+        return names
+
+    class FakeElement:
+        def __init__(self, value):
+            self.value = value
+
+    def test_unwraps_config_elements(self):
+        raw = [self.FakeElement("S01splash"), self.FakeElement("S89splash")]
+        assert self._names(raw) == ["S01splash", "S89splash"]
+
+    def test_still_accepts_plain_strings(self):
+        assert self._names(["S01splash"]) == ["S01splash"]
+
+    def test_drops_blanks_and_whitespace(self):
+        raw = [self.FakeElement(" S01splash "), self.FakeElement(""), self.FakeElement(None)]
+        assert self._names(raw) == ["S01splash"]
+
+    def test_handles_an_unset_array(self):
+        assert self._names(None) == []
