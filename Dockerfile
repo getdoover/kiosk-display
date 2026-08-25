@@ -43,6 +43,7 @@ FROM base_image AS final_image
 #                       renders as empty boxes
 RUN apk add --no-cache \
         sway \
+        swaybg \
         seatd \
         mesa-dri-gallium \
         mesa-egl \

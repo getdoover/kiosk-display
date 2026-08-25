@@ -32,6 +32,13 @@ class TestSwayConfig:
         assert "hide_cursor" in build_sway_config(make(), None, 0, True, "cmd")
         assert "hide_cursor" not in build_sway_config(make(), None, 0, False, "cmd")
 
+    def test_disables_xwayland_and_sets_a_black_background(self):
+        """Both are about what a support engineer sees: no Xwayland failure in
+        the log, and black rather than undefined pixels around the page."""
+        config = build_sway_config(make(), None, 0, True, "cmd")
+        assert "xwayland disable" in config
+        assert "output HDMI-A-1 bg #000000 solid_color" in config
+
     def test_launches_the_browser(self):
         config = build_sway_config(make(), None, 0, True, "kiosk-browser https://x/ --zoom 0.8")
         assert "exec_always kiosk-browser https://x/ --zoom 0.8" in config
