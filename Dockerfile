@@ -54,13 +54,20 @@ RUN apk add --no-cache \
         bubblewrap \
         font-dejavu \
         font-noto \
-    && rm -rf /var/cache/apk/* \
-    # sway ships with a file capability. Some device filesystems (an overlay on
-    # an ELPRO Quantum, for one) cannot store security.* xattrs, and `docker
-    # load` fails outright on the image. Copying the binary drops the xattr;
-    # nothing is lost because the app runs the compositor as root anyway.
-    && cp /usr/bin/sway /tmp/sway && mv -f /tmp/sway /usr/bin/sway \
-    && chmod 755 /usr/bin/sway
+    && rm -rf /var/cache/apk/*
+
+# Strip every file capability in the image.
+#
+# sway and gstreamer's PTP helper both ship `security.capability` xattrs. Some
+# device filesystems cannot store them — an overlayfs on an ELPRO Quantum, for
+# one — and `docker load` fails outright on the whole image rather than skipping
+# the attribute. Nothing here needs them: the app runs the compositor as root.
+RUN apk add --no-cache --virtual .caps libcap-utils \
+    && getcap -r / 2>/dev/null | cut -d' ' -f1 | while read -r f; do \
+         [ -n "$f" ] && setcap -r "$f" 2>/dev/null || true; \
+       done \
+    && apk del .caps \
+    && rm -rf /var/cache/apk/*
 
 COPY --from=builder --chown=app:app /app /app
 ENV PATH="/app/.venv/bin:$PATH"

@@ -39,8 +39,10 @@ src/kiosk_display/application.py  # Doover app: config, tags, UI, watchdog
 - **cog's DRM backend segfaults on imx-drm** importing dmabuf, and Alpine 3.23
   dropped the cog package anyway. WebKitGTK under sway is the combination that
   works.
-- **sway's file capability breaks `docker load`** on filesystems that can't store
-  `security.*` xattrs (the Quantum's overlay). The Dockerfile copies the binary
-  to drop the xattr; keep that.
+- **File capabilities break `docker load`** on filesystems that can't store
+  `security.*` xattrs (the Quantum's overlay) — and it fails the whole image, not
+  just the file. sway and gstreamer's PTP helper both ship them. The Dockerfile
+  strips every capability in the image with `getcap -r / | setcap -r`; keep that,
+  and don't assume one `cp` covers it — a new dependency can reintroduce one.
 - **Vendor splashes fight for the framebuffer.** Symptom is the page showing then
   being replaced a second later. See `conflicting_services` in the README.
