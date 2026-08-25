@@ -48,3 +48,19 @@ src/kiosk_display/application.py  # Doover app: config, tags, UI, watchdog
   `docker save img | grep -c security.capability` — it must be 0.
 - **Vendor splashes fight for the framebuffer.** Symptom is the page showing then
   being replaced a second later. See `conflicting_services` in the README.
+
+## Getting the image onto a device by hand
+
+Publish to a registry and `docker pull` where you can. When you must side-load,
+stream it — do not stage a tarball on the device first:
+
+```sh
+docker save kiosk-display:test | gzip -1 | \
+  ssh root@device 'docker load'
+```
+
+`/tmp` is tmpfs on these boards. A 250 MB tarball written there is 250 MB of a
+3.6 GB device's RAM, and doing it while the kiosk browser is running was enough
+to starve sshd on a Quantum already at load 9 — the box stayed pingable and
+stopped answering SSH. Stream into `docker load`, or stage on `/config`, which
+is real storage.
