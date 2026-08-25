@@ -54,19 +54,20 @@ RUN apk add --no-cache \
         bubblewrap \
         font-dejavu \
         font-noto \
-    && rm -rf /var/cache/apk/*
-
-# Strip every file capability in the image.
-#
-# sway and gstreamer's PTP helper both ship `security.capability` xattrs. Some
-# device filesystems cannot store them — an overlayfs on an ELPRO Quantum, for
-# one — and `docker load` fails outright on the whole image rather than skipping
-# the attribute. Nothing here needs them: the app runs the compositor as root.
-RUN apk add --no-cache --virtual .caps libcap-utils \
-    && getcap -r / 2>/dev/null | cut -d' ' -f1 | while read -r f; do \
+        libcap-utils \
+    # Strip every file capability, in this same layer.
+    #
+    # sway and gstreamer's PTP helper ship `security.capability` xattrs. Some
+    # device filesystems cannot store them — an overlayfs on an ELPRO Quantum,
+    # for one — and `docker load` then fails the *whole image*, not just the
+    # file. It has to happen here rather than in a later RUN: layers are
+    # additive, so stripping afterwards leaves the original xattr in the layer
+    # underneath and load still trips over it. Nothing needs these caps; the
+    # app runs the compositor as root.
+    && getcap -r / 2>/dev/null | cut -d" " -f1 | while read -r f; do \
          [ -n "$f" ] && setcap -r "$f" 2>/dev/null || true; \
        done \
-    && apk del .caps \
+    && apk del libcap-utils \
     && rm -rf /var/cache/apk/*
 
 COPY --from=builder --chown=app:app /app /app

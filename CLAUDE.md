@@ -42,7 +42,9 @@ src/kiosk_display/application.py  # Doover app: config, tags, UI, watchdog
 - **File capabilities break `docker load`** on filesystems that can't store
   `security.*` xattrs (the Quantum's overlay) — and it fails the whole image, not
   just the file. sway and gstreamer's PTP helper both ship them. The Dockerfile
-  strips every capability in the image with `getcap -r / | setcap -r`; keep that,
-  and don't assume one `cp` covers it — a new dependency can reintroduce one.
+  strips every capability with `getcap -r / | setcap -r` **inside the same RUN as
+  the apk add**. Layers are additive: stripping in a later RUN leaves the xattr
+  in the layer underneath and `docker load` still trips over it. Verify with
+  `docker save img | grep -c security.capability` — it must be 0.
 - **Vendor splashes fight for the framebuffer.** Symptom is the page showing then
   being replaced a second later. See `conflicting_services` in the README.
