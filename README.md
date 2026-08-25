@@ -1,85 +1,115 @@
+# Kiosk Display
 
-# Doover App Template
+Show a web page on a Linux device's own display, and keep it there.
 
-<img src="https://doover.com/wp-content/uploads/Doover-Logo-Landscape-Navy-padded-small.png" alt="App Icon" style="max-width: 300px;">
+The app brings its own graphics session — compositor, browser and software
+renderer — because the devices this targets generally have none. A typical
+industrial gateway has a KMS-capable kernel and nothing above it: no X, no
+Wayland, no browser, often no usable GPU userspace, and a read-only or
+package-less root filesystem. Rather than ask the device for a desktop, this
+ships one in the container.
 
-**A ready template for a Doover Application**
+## What it does
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/getdoover/kiosk-display/blob/main/LICENSE)
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/getdoover/kiosk-display?quickstart=1)
+```
+kiosk-display (this app, supervising)
+  └── sway                     wlroots compositor, output mode pinned
+        └── WebKitGTK window   one URL, fullscreen, no chrome
+```
 
-[Getting Started](#-getting-started) • [Configuration](#configuration) • [Developer](https://github.com/getdoover/kiosk-display/blob/main/DEVELOPMENT.md) • [Need Help?](#need-help)
+Everything about the display is detected at startup:
 
-<br/>
+| Decision | How it's made |
+|---|---|
+| Which output | First connected connector under `/sys/class/drm`, or the one named in config |
+| Which DRM device | The card that owns that connector — not assumed to be `card0` |
+| Which mode | The connector's preferred mode, or the one configured |
+| GPU or software | Mesa present **and** a render node **and** no vendor-only driver → GL; otherwise pixman |
 
-## 📖 Overview
+That last row is the one that matters in the field. A board can have a GPU the
+kernel exposes and Mesa cannot drive — an i.MX8 with NXP's `galcore` is the
+common case — and asking for GL there gets a compositor that refuses to start.
+Detection is deliberately pessimistic: when unsure it picks software rendering,
+which always works.
 
-A ready-to-use template for building Doover applications. This template provides the essential
-structure and configuration needed to quickly get started with app development on the Doover
-platform, using [pydoover](https://github.com/getdoover/pydoover) 1.0.
+## Configuration
 
-Use this repository as a starting point: fork it (or use the "Use this template" button),
-rename the `kiosk_display` package, and replace the sample config, tags, UI, and state machine
-with your own.
+| Key | Default | Meaning |
+|---|---|---|
+| `url` | — | The page to display. May be device-local |
+| `zoom` | `1.0` | Page zoom. Below 1 fits a desktop layout onto a small panel |
+| `output` | auto | Connector, e.g. `HDMI-A-1` |
+| `mode` | preferred | e.g. `1280x720@60`. Driving a 1080p panel at 720p roughly halves the work with no GPU |
+| `rotation` | `0` | 0 / 90 / 180 / 270, for a panel mounted sideways |
+| `renderer` | `auto` | Force `gl` or `pixman` if detection guesses wrong |
+| `reload_interval_min` | `0` | Periodic reload; guards against a page that wedges after weeks |
+| `hide_cursor` | `true` | There is rarely a mouse |
+| `ignore_tls_errors` | `true` | Device-local pages use self-signed certificates |
+| `conflicting_services` | — | Init scripts to stop first (see below) |
 
-<br/>
+## Vendor splash screens
 
-## 🚀 Getting Started
+Some vendor images run their own status screen on the framebuffer and will
+repaint over anything else — the symptom is your page appearing for a moment and
+being replaced a second later. Name the init scripts in `conflicting_services`
+and they are stopped before the session starts.
 
-### How to Use
+On an ELPRO Quantum that's `S01splash` **and** `S89splash` — the same Qt splash
+registered twice, and stopping only one leaves the other to fight you.
 
-#### Quick Start Guide
+Stopping them at boot is a separate, permanent change to the device and is left
+to the operator; this app only stops them while it runs. Doing it permanently
+means renaming them out of `rcS`'s `S??*` glob, since Buildroot's `rcS` runs
+each match without checking the execute bit:
 
-Click the **Open in GitHub Codespaces** badge above to launch a ready-to-go development environment with:
-- Python 3.13, uv, and all project dependencies
-- Doover CLI (`doover`) pre-installed — you'll be prompted to log in on first open
-- Claude Code with [doover-skills](https://github.com/getdoover/doover-skills) pre-configured
+```sh
+mv /etc/init.d/S89splash /etc/init.d/disabled.S89splash
+```
 
-> **Claude Code:** You'll be prompted for your `ANTHROPIC_API_KEY` when creating a Codespace.
-> Get a key at [console.anthropic.com](https://console.anthropic.com/settings/keys).
-> To skip this prompt in future, save it as a permanent secret at
-> [github.com/settings/codespaces](https://github.com/settings/codespaces).
+## Requirements
 
-This Doover App can be managed via the Doover CLI, and installed quickly onto devices through the Doover platform.
+The container needs real access to the display hardware:
 
-### Configuration
+```yaml
+privileged: true          # DRM master
+volumes:
+  - /dev/dri:/dev/dri
+  - /run/udev:/run/udev:ro
+  - /etc/init.d:/host/etc/init.d:ro   # only for conflicting_services
+```
 
-Configuration fields are declared in [`src/kiosk_display/app_config.py`](src/kiosk_display/app_config.py).
-The sample schema ships with:
+## Development
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| **Digital Outputs Enabled** | Toggle whether the app drives digital outputs | `true` |
-| **A Funny Message** | Free-text message used by the sample alert button | *(required)* |
-| **Simulator App Key** | App key of the simulator supplying `random_value` | *(required)* |
+```bash
+uv sync
+uv run pytest                       # detection and config-generation logic
+uv run export-config && uv run export-ui
+docker buildx build --platform linux/arm64 -t kiosk-display .
+```
 
-Replace these with your own fields, then regenerate `doover_config.json` with `uv run export-config`.
+The browser deliberately runs on the **distro** Python rather than the app venv:
+PyGObject is a compiled extension built against the distro interpreter, and the
+venv is on a different minor version. The supervising app keeps its venv; the
+window it launches gets a standalone script and the interpreter that can load
+`_gi`.
 
-<br/>
+## Project map
 
-## 🔗 Integrations
+| Path | Purpose |
+|---|---|
+| `src/kiosk_display/display.py` | Detection — connector, card, modes, whether Mesa can help |
+| `src/kiosk_display/session.py` | Compositor config generation and process supervision |
+| `src/kiosk_display/browser.py` | The fullscreen WebKit window (standalone, distro Python) |
+| `src/kiosk_display/application.py` | Doover app: config, tags, UI, watchdog |
+| `tests/` | Detection and config-generation, which have to cope with unfamiliar hardware |
 
-### Tags
+## Relationship to `doover-kiosk`
 
-The sample app publishes a few example tags via [`src/kiosk_display/app_tags.py`](src/kiosk_display/app_tags.py):
+`doover-kiosk` is the apt package for Raspberry Pi devices, running WebKitGTK
+under labwc on the Pi desktop. It is more capable on that hardware — autologin,
+reload button, memory watchdog, sticky settings — and a Pi has a working GPU and
+a package manager, so it needs none of what this app carries.
 
-| Tag | Description |
-|-----|-------------|
-| **is_working** | Heartbeat — `true` while the main loop is running |
-| **uptime** | Seconds since the app started |
-| **battery_voltage** | Example numeric value sourced from the simulator |
-| **test_output** | Echoes text entered in the UI |
-
-<br/>
-
-### Need Help?
-
-- 📧 Email: support@doover.com
-- 📖 [Doover Documentation](https://docs.doover.com)
-- 👨‍💻 [App Developer Documentation](https://github.com/getdoover/kiosk-display/blob/main/DEVELOPMENT.md)
-
-<br/>
-
-## 📄 License
-
-This app is licensed under the [Apache License 2.0](https://github.com/getdoover/kiosk-display/blob/main/LICENSE).
+This app exists for devices where that isn't true, and for fleets that would
+rather configure a display from the Doover UI than over SSH. The two share an
+engine choice (WebKitGTK) but not a delivery mechanism.

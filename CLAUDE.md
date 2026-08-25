@@ -1,61 +1,46 @@
-# Doover App Template
+# Kiosk Display
 
-A template for building device applications on the Doover IoT platform using pydoover 1.0.
+A Doover device app that shows a web page on the device's own display. It brings
+its own compositor and browser because the target devices have neither.
 
 ## Commands
 
 ```bash
-uv run pytest tests -v          # Run tests
-uv run export-config             # Write config_schema into doover_config.json
-uv run export-ui                 # Write ui_schema into doover_config.json (required to publish)
-doover app run                   # Run app + simulator locally via docker-compose
+uv sync
+uv run pytest                                    # detection + config generation
+uv run export-config && uv run export-ui         # -> doover_config.json
+docker buildx build --platform linux/arm64 -t kiosk-display .
 ```
 
-## Project Structure
+## Structure
 
 ```
-src/app_template/
-  __init__.py        # Entry point — run_app(SampleApplication())
-  application.py     # Main app class (setup, main_loop, UI handlers)
-  app_config.py      # Config schema — class-level declarations
-  app_tags.py        # Runtime state tags — bound to UI elements
-  app_ui.py          # UI definition — subclasses ui.UI
-  app_state.py       # State machine using pydoover.state.StateMachine
-simulators/sample/   # Simulator app that produces test data
-tests/               # pytest suite
+src/kiosk_display/display.py      # detect connector, card, modes, GPU usability
+src/kiosk_display/session.py      # sway config generation + process supervision
+src/kiosk_display/browser.py      # fullscreen WebKitGTK window (standalone)
+src/kiosk_display/application.py  # Doover app: config, tags, UI, watchdog
 ```
 
-## pydoover 1.0 Patterns
+## Things that will bite you
 
-This app uses the pydoover 1.0 declarative API. Key patterns:
-
-### Application class (application.py)
-- Set `config_cls`, `tags_cls`, `ui_cls` as class attributes — framework wires them up automatically
-- Override `async def setup()` for init and `async def main_loop()` for the periodic loop
-- Use `@ui.handler("element_name")` for UI interaction callbacks (signature: `self, ctx, value`)
-- Access config via `self.config.<field>.value`, tags via `self.tags.<name>.set(val)` / `.get()`
-- Cross-app tags: `self.get_tag("tag_name", app_key)`
-- Messaging: `await self.create_message(channel, {data})`
-
-### Config (app_config.py)
-- Subclass `config.Schema` with class-level `config.Boolean`, `config.String`, `config.Application`, etc.
-- `export()` is a classmethod: `SampleConfig.export(path, name)`
-
-### Tags (app_tags.py)
-- Subclass `Tags` with class-level `Tag("type", default=...)` declarations
-- Types: "boolean", "number", "integer", "string", "array", "object"
-
-### UI (app_ui.py)
-- Subclass `ui.UI` with class-level element declarations
-- Bind variables to tags: `ui.NumericVariable("Label", value=MyTags.field, name="id")`
-- Element types: `BooleanVariable`, `NumericVariable`, `TextVariable`, `Button`, `TextInput`, `FloatInput`, `Select`, `Submodule`
-- Use explicit `name=` kwarg on interactive elements to match handler names
-
-### State Machine (app_state.py)
-- Uses `pydoover.state.StateMachine` (wraps the `transitions` library)
-- Define `states` and `transitions` as class attributes, `on_enter_<state>()` callbacks
-
-## Doover Skills
-
-If you have the doover-skills plugin installed, use `/doover` to see all available skills.
-Key skills: `/doover-device-apps` for device app development, `/pydoover` for API reference.
+- **Two Pythons, on purpose.** PyGObject is compiled against the distro
+  interpreter; the app venv is a different minor version and cannot load `_gi`.
+  The browser is copied to `/usr/local/lib/kiosk_browser.py` and run with
+  `/usr/bin/python3`. Don't "tidy" it into the venv.
+- **Never assume `card0`.** The DRM card that owns the connected connector is
+  whichever `cardN-<connector>` sysfs entry says; on an i.MX8 the display pipe
+  is `card1` and `card0` is the GPU.
+- **A render node does not mean Mesa can use it.** i.MX8 exposes `renderD128`
+  through NXP's `galcore`, which Mesa cannot drive. `probe_acceleration`
+  blacklists vendor-only drivers and falls back to pixman. Guessing optimistically
+  gets a compositor that won't start.
+- **sway, not cage.** cage is smaller but cannot pin an output mode, and driving
+  a 1080p panel at 720p is the single biggest saving when rendering in software.
+- **cog's DRM backend segfaults on imx-drm** importing dmabuf, and Alpine 3.23
+  dropped the cog package anyway. WebKitGTK under sway is the combination that
+  works.
+- **sway's file capability breaks `docker load`** on filesystems that can't store
+  `security.*` xattrs (the Quantum's overlay). The Dockerfile copies the binary
+  to drop the xattr; keep that.
+- **Vendor splashes fight for the framebuffer.** Symptom is the page showing then
+  being replaced a second later. See `conflicting_services` in the README.

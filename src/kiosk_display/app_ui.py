@@ -2,42 +2,25 @@ from pathlib import Path
 
 from pydoover import ui
 
-from .app_tags import SampleTags
+from .app_tags import KioskDisplayTags as Tags
 
 
 class KioskDisplayUI(ui.UI):
-    is_working = ui.BooleanVariable("We Working?", value=SampleTags.is_working, name="is_working")
-    uptime = ui.NumericVariable("Uptime", value=SampleTags.uptime, name="uptime")
+    showing = ui.BooleanVariable("Showing", value=Tags.showing, name="showing")
+    output = ui.TextVariable("Output", value=Tags.output, name="output")
+    mode = ui.TextVariable("Mode", value=Tags.mode, name="mode")
+    renderer = ui.TextVariable("Renderer", value=Tags.renderer, name="renderer")
+    url = ui.TextVariable("URL", value=Tags.url, name="url")
 
-    send_alert = ui.Button("Send message as alert", name="send_alert", position=1)
-    text_parameter = ui.TextInput("Put in a message", name="test_message")
-    test_output = ui.TextVariable("This is message we got", value=SampleTags.test_output, name="test_output")
+    restart = ui.Button("Restart Display", name="restart", position=1)
 
-    battery = ui.Submodule(
-        "Battery Module",
-        name="battery",
+    diagnostics = ui.Submodule(
+        "Diagnostics",
+        name="diagnostics",
         children=[
-            ui.NumericVariable(
-                "Battery Voltage",
-                value=SampleTags.battery_voltage,
-                name="voltage",
-                precision=2,
-                ranges=[
-                    ui.Range("Low", 0, 10, ui.Colour.red),
-                    ui.Range("Normal", 10, 20, ui.Colour.green),
-                    ui.Range("High", 20, 30, ui.Colour.blue),
-                ],
-            ),
-            ui.FloatInput("Low Voltage Alert", name="low_voltage_alert"),
-            ui.Select(
-                "Charge Mode",
-                name="charge_mode",
-                options=[
-                    ui.Option("Charge"),
-                    ui.Option("Discharge"),
-                    ui.Option("Idle"),
-                ],
-            ),
+            ui.BooleanVariable("Display Detected", value=Tags.display_found, name="display_found"),
+            ui.NumericVariable("Restarts", value=Tags.restarts, name="restarts", precision=0),
+            ui.TextVariable("Last Error", value=Tags.last_error, name="last_error"),
         ],
     )
 
