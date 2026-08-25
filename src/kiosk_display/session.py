@@ -148,11 +148,13 @@ class Session:
         # seatd has to own its socket before wlroots asks for a seat.
         await asyncio.sleep(2)
 
+        # Inherit stdio rather than piping it. A pipe nothing drains fills its
+        # buffer and then blocks the compositor — and the browser logs through
+        # the same stream, so it would take the display down with it. Inheriting
+        # puts both in `docker logs` where they are actually useful.
         self.sway = await asyncio.create_subprocess_exec(
             "sway", "-c", str(CONFIG_PATH),
             env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
         )
         log.info("Started compositor (pid %s)", self.sway.pid)
 
