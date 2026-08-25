@@ -68,14 +68,18 @@ mv /etc/init.d/S89splash /etc/init.d/disabled.S89splash
 
 ## Requirements
 
-The container needs real access to the display hardware:
+The container needs real access to the display hardware, declared in
+`deployment/docker-compose.yml` — the platform ships that with the app, so an
+install gets it automatically. Without it the app starts, finds the connector,
+and then cannot open it, which reads as an app bug rather than a missing
+permission.
 
 ```yaml
-privileged: true          # DRM master
+privileged: true                        # DRM master
 volumes:
-  - /dev/dri:/dev/dri
-  - /run/udev:/run/udev:ro
-  - /etc/init.d:/host/etc/init.d:ro   # only for conflicting_services
+  - /dev/dri:/dev/dri:rw                # display and render nodes
+  - /run/udev:/run/udev:ro              # wlroots output discovery
+  - /etc/init.d:/host/etc/init.d:ro     # for conflicting_services
 ```
 
 ## Development

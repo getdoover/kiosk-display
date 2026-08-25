@@ -1,0 +1,26 @@
+services:
+  kiosk_display:
+    image: registry.doover.com/apps/kiosk_display:main
+    restart: unless-stopped
+    network_mode: host
+
+    # The compositor has to become DRM master on the real display hardware.
+    # Without this the app starts, finds the connector, and then fails to open
+    # it — which looks like a bug in the app rather than a missing permission.
+    privileged: true
+
+    environment:
+      - APP_KEY=$APP_KEY
+      - HEALTHCHECK_PORT=$HEALTHCHECK_PORT
+
+    volumes:
+      # The display and render nodes. Explicit as well as privileged, so the
+      # requirement is visible rather than implied.
+      - /dev/dri:/dev/dri:rw
+      # wlroots discovers and hotplugs outputs through udev.
+      - /run/udev:/run/udev:ro
+      # Read-only view of the host's init scripts, so `conflicting_services`
+      # can stop a vendor splash that would otherwise repaint over the page.
+      - /etc/init.d:/host/etc/init.d:ro
+      # Host local time, so anything the page renders is in site-local time.
+      - /etc/localtime:/etc/localtime:ro
