@@ -19,10 +19,56 @@ src/kiosk_display/display.py      # detect connector, card, modes, GPU usability
 src/kiosk_display/session.py      # sway config generation + process supervision
 src/kiosk_display/browser.py      # fullscreen WebKitGTK window (standalone)
 src/kiosk_display/application.py  # Doover app: config, tags, UI, watchdog
+src/kiosk_display/source.py       # widget-app discovery + URL templating
 ```
 
 ## Things that will bite you
 
+- **A blank URL is the normal case, not a broken install.** A widget app makes
+  itself a kiosk with `"depends_on": ["kiosk_display"]`; the platform then
+  creates the kiosk install *bare*, because a dependent install has nowhere to
+  get config from (`ApplicationInstallation.save` in doover-control). So the
+  kiosk finds its own page: it reads the device's `deployment_config` aggregate
+  and looks for an entry carrying `dv_widget_url`, which the platform sets only
+  for apps that ship a widget. Don't move that declaration into the widget's
+  own config — the point is that a widget repo adds one line and nothing else.
+- **Widgets are served locally, by the DDA, not by the cloud site.**
+  `dv_widget_url` is the widget's *channel name*, and the agent's web server
+  (`49100` by default) serves it at `/widget/<channel>?app_key=<install>`. That
+  is why a keyboard-less panel never meets a login screen — don't "fix" the
+  default URL to point at `<org>.doover.com/agent/<id>`, which is behind
+  FusionAuth.
+- **One knob for what to show, and it is `url`.** There is deliberately no
+  "device agent URL" or "source app" setting: the agent's web port is fixed at
+  49100, and the one case a default can't decide — two widget apps, one panel —
+  is answered by writing the URL out. Adding a config element to cover an edge
+  case makes the common install look like it has decisions to make.
+- **A config element's key comes from its display name, not the attribute**
+  (`config.String("Reload Interval (min)")` exports as `reload_interval_min`,
+  not `reload_minutes`). That mismatch survives only because nothing references
+  it by key; keep new elements' names and display names aligned.
+- **`self.config` is only this app's entry.** The rest of the device lives in
+  the `deployment_config` aggregate, fetched via `device_agent`. Every entry
+  carries `AGENT_ID`, `ORGANISATION_ID`, `APPLICATION_NAME` and `APP_KEY`.
+- **Anything unknown at startup raises `UnresolvedURL`, never an exception.**
+  A kiosk deployed before its widget app, or a failed aggregate fetch, both
+  mean "try again shortly" — the watchdog does exactly that. Letting it escape
+  `setup()` takes the app down instead of self-healing.
+- **One subscription: the widget channel.** It carries the bundle, so an update
+  there means the page itself changed — SIGHUP the browser and it reloads
+  without the panel blanking. Don't add a `deployment_config` subscription back
+  for config changes: editing an install's config redeploys it, and redeploying
+  this app restarts the container with the new config already applied. Watching
+  it would only flicker the wall every time an unrelated app on the device is
+  redeployed.
+- **Subscriptions can't be removed** (`add_event_callback` has no inverse), so
+  the widget-channel handler compares the channel it was woken for against the
+  one currently on screen and no-ops on a stale one.
+- **The browser is a grandchild, found via `/proc`.** sway launches it with
+  `exec_always`, so there is no handle — `session.browser_pids` scans for
+  `kiosk_browser.py`. Keep it dependency-free; adding procps to the image just
+  to run `pkill` is a bigger change than it looks (see the file-capabilities
+  note below).
 - **Two Pythons, on purpose.** PyGObject is compiled against the distro
   interpreter; the app venv is a different minor version and cannot load `_gi`.
   The browser is copied to `/usr/local/lib/kiosk_browser.py` and run with

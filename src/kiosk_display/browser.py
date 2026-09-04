@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
 
 import gi
@@ -90,6 +91,13 @@ class KioskWindow(Gtk.ApplicationWindow):
         self._retry_source = GLib.timeout_add_seconds(RETRY_SECONDS, retry)
 
     def reload_now(self) -> None:
+        """Re-fetch the page and everything under it.
+
+        Bypassing the cache is the point: the usual reason to be asked is that
+        the app serving this page has just been redeployed underneath it, so a
+        revalidating reload could put the old bundle straight back up.
+        """
+        log.info("Reloading %s", self.url)
         self.view.reload_bypass_cache()
 
 
@@ -116,6 +124,15 @@ def main(argv: list[str] | None = None) -> int:
         win = KioskWindow(application, args.url, args.zoom, args.ignore_tls)
         window["win"] = win
         win.present()
+
+        # The supervising app has no handle on this process — the compositor
+        # started it — so SIGHUP is how a redeployed widget gets onto the panel
+        # without blanking it by restarting the whole session.
+        GLib.unix_signal_add(
+            GLib.PRIORITY_DEFAULT,
+            signal.SIGHUP,
+            lambda: (win.reload_now(), GLib.SOURCE_CONTINUE)[1],
+        )
 
         if args.reload_minutes > 0:
             GLib.timeout_add_seconds(

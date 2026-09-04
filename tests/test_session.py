@@ -1,7 +1,15 @@
 """The generated compositor config is the contract between this app and sway."""
 
+import signal
+
+from kiosk_display import session as session_mod
 from kiosk_display.display import Display, Mode
-from kiosk_display.session import build_sway_config, session_environment
+from kiosk_display.session import (
+    browser_pids,
+    build_sway_config,
+    reload_page,
+    session_environment,
+)
 
 
 def make(accelerated=False, dri_path="/usr/lib/dri"):
@@ -101,3 +109,60 @@ class TestConflictingServiceNames:
 
     def test_handles_an_unset_array(self):
         assert self._names(None) == []
+
+
+class TestBrowserSignalling:
+    """Finding the browser to reload it.
+
+    The compositor starts the browser, so this app never holds a handle to it —
+    /proc is the only way back to the process, and getting it wrong means a
+    redeployed widget silently keeps showing the old bundle.
+    """
+
+    def fake_proc(self, tmp_path, **pids):
+        for pid, cmdline in pids.items():
+            entry = tmp_path / str(pid)
+            entry.mkdir()
+            (entry / "cmdline").write_bytes(cmdline.encode())
+        (tmp_path / "self").mkdir()  # /proc has non-numeric entries too
+        return tmp_path
+
+    def test_finds_the_browser_among_everything_else(self, tmp_path):
+        proc = self.fake_proc(
+            tmp_path,
+            **{
+                "1": "/usr/bin/python3\x00-m\x00kiosk_display\x00",
+                "42": "sway\x00-c\x00/tmp/kiosk-runtime/sway.conf\x00",
+                "77": "/usr/bin/python3\x00/usr/local/lib/kiosk_browser.py\x00https://localhost:49100/\x00",
+            },
+        )
+        assert browser_pids(proc=proc) == [77]
+
+    def test_finds_nothing_when_the_browser_is_not_running(self, tmp_path):
+        proc = self.fake_proc(tmp_path, **{"42": "sway\x00"})
+        assert browser_pids(proc=proc) == []
+
+    def test_tolerates_a_process_exiting_mid_scan(self, tmp_path):
+        proc = self.fake_proc(tmp_path, **{"9": "kiosk_browser.py\x00"})
+        (proc / "9" / "cmdline").unlink()
+        assert browser_pids(proc=proc) == []
+
+    def test_says_nothing_was_reloaded_when_there_is_no_browser(self, tmp_path):
+        """The caller restarts the session on a zero, so this must not lie."""
+        assert reload_page(proc=self.fake_proc(tmp_path)) == 0
+
+    def test_signals_every_browser_it_finds(self, tmp_path, monkeypatch):
+        proc = self.fake_proc(tmp_path, **{"77": "kiosk_browser.py\x00"})
+        sent = []
+        monkeypatch.setattr(session_mod.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+        assert reload_page(proc=proc) == 1
+        assert sent == [(77, signal.SIGHUP)]
+
+    def test_a_process_that_dies_before_the_signal_is_not_counted(self, tmp_path, monkeypatch):
+        proc = self.fake_proc(tmp_path, **{"77": "kiosk_browser.py\x00"})
+
+        def gone(pid, sig):
+            raise ProcessLookupError
+
+        monkeypatch.setattr(session_mod.os, "kill", gone)
+        assert reload_page(proc=proc) == 0

@@ -23,6 +23,10 @@ log = logging.getLogger(__name__)
 RUNTIME_DIR = Path("/tmp/kiosk-runtime")
 CONFIG_PATH = RUNTIME_DIR / "sway.conf"
 
+#: Identifies the browser in /proc. The compositor starts it, so there is no
+#: handle to keep — but it shares this container's PID namespace.
+BROWSER_MARKER = "kiosk_browser.py"
+
 ROTATIONS = {0: "normal", 90: "90", 180: "180", 270: "270"}
 
 
@@ -125,6 +129,50 @@ async def stop_conflicting_services(names: list[str]) -> list[str]:
         except (OSError, asyncio.TimeoutError) as exc:
             log.warning("Could not stop %r: %s", name, exc)
     return stopped
+
+
+PROC = Path("/proc")
+
+
+def browser_pids(marker: str = BROWSER_MARKER, proc: Path = PROC) -> list[int]:
+    """Find the browser by reading /proc.
+
+    The compositor launches the browser via `exec_always`, so it is a grandchild
+    this app never gets a handle to. Scanning /proc keeps the image free of
+    procps just to send one signal.
+    """
+    pids = []
+    try:
+        entries = sorted(proc.iterdir())
+    except OSError:
+        return pids  # no /proc: not Linux, so not a device either
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_bytes().decode(errors="replace")
+        except OSError:
+            continue  # the process exited while we were looking at it
+        if marker in cmdline:
+            pids.append(int(entry.name))
+    return pids
+
+
+def reload_page(marker: str = BROWSER_MARKER, proc: Path = PROC) -> int:
+    """Ask the browser to re-fetch its page, and say how many heard.
+
+    SIGHUP rather than a restart: the compositor stays up, the panel never goes
+    black, and a page that is only stale — a widget bundle redeployed under it —
+    is back within a frame or two.
+    """
+    signalled = 0
+    for pid in browser_pids(marker, proc):
+        try:
+            os.kill(pid, signal.SIGHUP)
+            signalled += 1
+        except (ProcessLookupError, PermissionError) as exc:
+            log.warning("Could not signal browser %s: %s", pid, exc)
+    return signalled
 
 
 class Session:

@@ -1,15 +1,31 @@
+import asyncio
 import logging
 import os
 import shlex
 
 from pydoover import ui
 from pydoover.docker import Application
+from pydoover.models import EventSubscription
 
 from .app_config import KioskDisplayConfig
 from .app_tags import KioskDisplayTags
 from .app_ui import KioskDisplayUI
 from . import display as display_mod
-from .session import Session, build_sway_config, session_environment, stop_conflicting_services
+from .session import (
+    Session,
+    build_sway_config,
+    reload_page,
+    session_environment,
+    stop_conflicting_services,
+)
+from .source import (
+    DEFAULT_URL,
+    UnresolvedURL,
+    agent_id_of,
+    choose_source,
+    find_widget_apps,
+    resolve_url,
+)
 
 log = logging.getLogger(__name__)
 
@@ -30,14 +46,31 @@ class KioskDisplayApplication(Application):
     config: KioskDisplayConfig
     tags: KioskDisplayTags
 
+    #: The widget channel carries the bundle itself — an update there is the
+    #: new JavaScript having landed, so there is nothing to wait for beyond
+    #: collapsing a burst of writes into one reload.
+    BUNDLE_DELAY = 1
+
     async def setup(self):
         self.session = Session()
         self._restarts = 0
+        self._widget_channel = ""
+        self._watched: set[str] = set()
+        self._reload_task: asyncio.Task | None = None
         await self.start_session()
 
     async def start_session(self):
-        """Detect the display, then bring up the session on it."""
+        """Work out what to show, detect the display, then bring up the session."""
         await self.tags.showing.set(False)
+
+        try:
+            url = await self.resolve_url()
+        except UnresolvedURL as exc:
+            # Usually a kiosk that deployed before the app that pulled it in.
+            # The watchdog comes back every cycle, so this resolves itself.
+            await self.tags.last_error.set(str(exc)[:200])
+            log.warning("Nothing to show yet: %s", exc)
+            return
 
         stopped = await stop_conflicting_services(self._conflicting_service_names())
         if stopped:
@@ -65,7 +98,7 @@ class KioskDisplayApplication(Application):
             mode=mode,
             rotation=int(self.config.rotation.value or 0),
             hide_cursor=bool(self.config.hide_cursor.value),
-            browser_command=self._browser_command(),
+            browser_command=self._browser_command(url),
         )
 
         try:
@@ -78,9 +111,115 @@ class KioskDisplayApplication(Application):
         await self.tags.output.set(found.connector)
         await self.tags.mode.set(str(mode) if mode else "preferred")
         await self.tags.renderer.set(effective)
-        await self.tags.url.set(self.config.url.value or "")
+        await self.tags.url.set(url)
         await self.tags.last_error.set("")
         await self.tags.showing.set(True)
+
+    async def resolve_url(self) -> str:
+        """The page to show, which the device usually already knows.
+
+        A widget app that names `kiosk_display` in `depends_on` gets a kiosk
+        install created for it automatically — and created bare, because the
+        platform has nowhere to put config for a dependent. So a blank URL is
+        not a misconfiguration, it is the normal case: find the app that ships
+        a widget and show the copy the device agent serves locally.
+        """
+        configured = (self.config.url.value or "").strip()
+        template = configured or DEFAULT_URL
+
+        source = None
+        agent_id = ""
+        if "{" in template:
+            aggregate = await self._deployment_config()
+            source = choose_source(find_widget_apps(aggregate, self.app_key), template)
+            agent_id = agent_id_of(aggregate, self.app_key)
+
+            if not configured and source is None:
+                raise UnresolvedURL("No app with a widget on this device yet")
+
+        await self.tags.source_app.set(source.app_key if source else "")
+        if source is not None:
+            log.info("Showing %s (%s)", source.display_name, source.app_key)
+            self._watch_widget_channel(source.widget_channel)
+
+        return resolve_url(template, agent_id=agent_id, source=source)
+
+    async def _deployment_config(self) -> dict:
+        """Every install's config on this device, not just our own.
+
+        Fetched once at startup rather than subscribed to: `self.config` only
+        ever holds this app's own entry, and the rest of the device is what
+        says which app wants the panel.
+
+        A failed fetch is reported as an unresolved URL rather than allowed to
+        propagate: the watchdog's answer to both is to try again shortly, and
+        an exception out of `setup` takes the whole app down instead.
+        """
+        try:
+            aggregate = await self.device_agent.fetch_channel_aggregate("deployment_config")
+        except Exception as exc:  # noqa: BLE001 — any transport failure reads the same
+            raise UnresolvedURL(f"Could not read this device's config: {exc}") from exc
+        return getattr(aggregate, "data", None) or {}
+
+    def _watch_widget_channel(self, channel: str) -> None:
+        """Subscribe to the channel the widget's bundle is published on.
+
+        A deployment of the widget app writes the new JavaScript here, which is
+        a far more precise signal than the config aggregate: it fires when the
+        page has actually changed, and not when an unrelated app on the same
+        device is redeployed.
+
+        Subscriptions can't be removed, so on the rare occasion the source app
+        changes, the old callback stays registered and no-ops — it checks the
+        channel it was woken for against the one currently on screen.
+        """
+        self._widget_channel = channel
+        if channel in self._watched:
+            return
+
+        self.device_agent.add_event_callback(
+            channel, self._on_bundle_changed, EventSubscription.aggregate_update
+        )
+        self._watched.add(channel)
+        log.info("Watching %s for new widget builds", channel)
+
+    async def _on_bundle_changed(self, event):
+        """The widget's bundle was republished — put it on screen.
+
+        This is the only thing the app reloads for. Config changes need no
+        subscription: editing an install's config redeploys it, and redeploying
+        this app restarts the container with the new config already in hand.
+        """
+        channel = getattr(getattr(event, "channel", None), "name", "")
+        if channel != self._widget_channel:
+            return  # a stale subscription from a previous source app
+
+        if self._reload_task and not self._reload_task.done():
+            self._reload_task.cancel()
+        self._reload_task = asyncio.create_task(self._reload_after_delay())
+
+    async def _reload_after_delay(self) -> None:
+        try:
+            await asyncio.sleep(self.BUNDLE_DELAY)
+            await self.reload_now()
+        except asyncio.CancelledError:
+            raise  # a later build superseded this one
+        except Exception:  # noqa: BLE001 — a failed reload must not kill the app
+            log.exception("Could not reload the display")
+
+    async def reload_now(self) -> None:
+        """Re-fetch the page in place, without blanking the panel."""
+        if not self.session.running:
+            return  # the watchdog owns this case
+
+        if reload_page():
+            log.info("Reloaded the page after a new widget build")
+        else:
+            # No browser to signal, but a live compositor — restarting is the
+            # honest fallback rather than leaving a stale page on the wall.
+            log.warning("No browser process to reload; restarting the session")
+            await self.session.stop()
+            await self.start_session()
 
     def _conflicting_service_names(self) -> list[str]:
         """Names out of the `Array` config element.
@@ -102,8 +241,8 @@ class KioskDisplayApplication(Application):
         "KIOSK_BROWSER_COMMAND", "/usr/bin/python3 /usr/local/lib/kiosk_browser.py"
     )
 
-    def _browser_command(self) -> str:
-        args = [*self.BROWSER.split(), self.config.url.value or "about:blank"]
+    def _browser_command(self, url: str) -> str:
+        args = [*self.BROWSER.split(), url or "about:blank"]
         if self.config.zoom.value:
             args += ["--zoom", str(self.config.zoom.value)]
         if self.config.ignore_tls_errors.value:
@@ -134,4 +273,6 @@ class KioskDisplayApplication(Application):
         await self.start_session()
 
     async def on_shutdown(self):
+        if self._reload_task and not self._reload_task.done():
+            self._reload_task.cancel()
         await self.session.stop()

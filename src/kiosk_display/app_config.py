@@ -4,16 +4,24 @@ from pydoover import config
 
 
 class KioskDisplayConfig(config.Schema):
-    """Everything is optional except the URL.
+    """Everything is optional, including the URL.
 
     Defaults are all "work it out": the app finds the connected display, its
-    preferred mode, and whether the GPU can be used, so a bare install on
-    unfamiliar hardware still shows the page.
+    preferred mode, whether the GPU can be used, and — when no URL is given —
+    which app on this device wanted a screen in the first place. A bare install
+    on unfamiliar hardware still shows the right page.
     """
 
     url = config.String(
         "URL",
-        description="The page to display. May be a device-local address.",
+        default=None,
+        description=(
+            "The page to display. Leave blank to show the widget of the app "
+            "that named kiosk_display in its dependencies, served locally by "
+            "the device agent. Supports {device_agent_url}, {widget_channel}, "
+            "{app_key}, {agent_id} and {org_id}, so one config profile works "
+            "across a fleet."
+        ),
     )
 
     zoom = config.Number(

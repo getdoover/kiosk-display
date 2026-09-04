@@ -20,6 +20,7 @@ class KioskDisplayUI(ui.UI):
         children=[
             ui.BooleanVariable("Display Detected", value=Tags.display_found, name="display_found"),
             ui.NumericVariable("Restarts", value=Tags.restarts, name="restarts", precision=0),
+            ui.TextVariable("Source App", value=Tags.source_app, name="source_app"),
             ui.TextVariable("Last Error", value=Tags.last_error, name="last_error"),
         ],
     )

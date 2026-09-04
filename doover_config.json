@@ -10,6 +10,287 @@
         "depends_on": [],
         "organisation_id": null,
         "image_name": "registry.doover.com/apps/kiosk_display:main",
-        "build_args": "--platform linux/amd64,linux/arm64"
+        "build_args": "--platform linux/amd64,linux/arm64",
+        "config_schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "",
+            "title": "$default",
+            "type": "object",
+            "properties": {
+                "url": {
+                    "title": "URL",
+                    "x-name": "url",
+                    "x-hidden": false,
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "The page to display. Leave blank to show the widget of the app that named kiosk_display in its dependencies, served locally by the device agent. Supports {device_agent_url}, {widget_channel}, {app_key}, {agent_id} and {org_id}, so one config profile works across a fleet.",
+                    "default": null,
+                    "x-position": 0
+                },
+                "zoom": {
+                    "title": "Zoom",
+                    "x-name": "zoom",
+                    "x-hidden": false,
+                    "type": [
+                        "number",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "Page zoom. Below 1 fits more on screen \u2014 useful for driving a dashboard designed for a desktop onto a 720p panel.",
+                    "default": 1.0,
+                    "x-position": 1,
+                    "minimum": 0.25,
+                    "maximum": 4.0
+                },
+                "output": {
+                    "title": "Output",
+                    "x-name": "output",
+                    "x-hidden": false,
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "Connector to use, e.g. 'HDMI-A-1'. Leave blank to use the first connected output.",
+                    "default": null,
+                    "x-position": 2
+                },
+                "mode": {
+                    "title": "Mode",
+                    "x-name": "mode",
+                    "x-hidden": false,
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "Display mode, e.g. '1280x720@60'. Leave blank for the panel's preferred mode. Driving a 1080p panel at 720p roughly halves the work when there is no GPU.",
+                    "default": null,
+                    "x-position": 3
+                },
+                "rotation": {
+                    "enum": [
+                        "0",
+                        "90",
+                        "180",
+                        "270"
+                    ],
+                    "title": "Rotation",
+                    "x-name": "rotation",
+                    "x-hidden": false,
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "Screen rotation in degrees, for a panel mounted sideways.",
+                    "default": "0",
+                    "x-position": 4
+                },
+                "renderer": {
+                    "enum": [
+                        "auto",
+                        "gl",
+                        "pixman"
+                    ],
+                    "title": "Renderer",
+                    "x-name": "renderer",
+                    "x-hidden": false,
+                    "type": [
+                        "string",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "'auto' uses the GPU when Mesa can drive it and falls back to software. Force 'pixman' if the GPU is present but unusable.",
+                    "default": "auto",
+                    "x-position": 5
+                },
+                "reload_interval_min": {
+                    "title": "Reload Interval (min)",
+                    "x-name": "reload_interval_min",
+                    "x-hidden": false,
+                    "type": [
+                        "number",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "Reload the page on this interval. 0 never reloads. A guard against a page that has quietly wedged after weeks on a wall.",
+                    "default": 0.0,
+                    "x-position": 6,
+                    "minimum": 0.0
+                },
+                "hide_cursor": {
+                    "title": "Hide Cursor",
+                    "x-name": "hide_cursor",
+                    "x-hidden": false,
+                    "type": [
+                        "boolean",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "Hide the mouse pointer. There is rarely a mouse.",
+                    "default": true,
+                    "x-position": 7
+                },
+                "ignore_tls_errors": {
+                    "title": "Ignore TLS Errors",
+                    "x-name": "ignore_tls_errors",
+                    "x-hidden": false,
+                    "type": [
+                        "boolean",
+                        "null"
+                    ],
+                    "x-required": false,
+                    "description": "Accept self-signed certificates. Device-local pages are usually served with one and there is no user to click through the warning.",
+                    "default": true,
+                    "x-position": 8
+                },
+                "conflicting_services": {
+                    "title": "Conflicting Services",
+                    "x-name": "conflicting_services",
+                    "x-hidden": false,
+                    "type": "array",
+                    "x-required": true,
+                    "description": "Init scripts to stop before starting, for vendor images that run their own splash on the framebuffer and would repaint over this. On an ELPRO Quantum: S01splash and S89splash.",
+                    "x-position": 9,
+                    "items": {
+                        "title": "Service",
+                        "x-name": "service",
+                        "x-hidden": false,
+                        "type": "string",
+                        "x-required": true
+                    }
+                }
+            },
+            "additionalElements": true,
+            "required": [
+                "conflicting_services"
+            ]
+        },
+        "ui_schema": {
+            "displayString": "$config.app().APP_DISPLAY_NAME",
+            "hidden": "$config.app().hidden:boolean:false:boolean:false",
+            "position": "$config.app().dv_app_position:number:100",
+            "icon": null,
+            "colour": null,
+            "defaultOpen": false,
+            "type": "uiApplication",
+            "name": "$config.app().APP_KEY",
+            "children": {
+                "showing": {
+                    "name": "showing",
+                    "type": "uiVariable",
+                    "displayString": "Showing",
+                    "showActivity": true,
+                    "position": 51,
+                    "hidden": false,
+                    "varType": "bool",
+                    "currentValue": "$tag.app().showing:boolean:false"
+                },
+                "output": {
+                    "name": "output",
+                    "type": "uiVariable",
+                    "displayString": "Output",
+                    "showActivity": true,
+                    "position": 52,
+                    "hidden": false,
+                    "varType": "string",
+                    "currentValue": "$tag.app().output:string:\"\""
+                },
+                "mode": {
+                    "name": "mode",
+                    "type": "uiVariable",
+                    "displayString": "Mode",
+                    "showActivity": true,
+                    "position": 53,
+                    "hidden": false,
+                    "varType": "string",
+                    "currentValue": "$tag.app().mode:string:\"\""
+                },
+                "renderer": {
+                    "name": "renderer",
+                    "type": "uiVariable",
+                    "displayString": "Renderer",
+                    "showActivity": true,
+                    "position": 54,
+                    "hidden": false,
+                    "varType": "string",
+                    "currentValue": "$tag.app().renderer:string:\"\""
+                },
+                "url": {
+                    "name": "url",
+                    "type": "uiVariable",
+                    "displayString": "URL",
+                    "showActivity": true,
+                    "position": 55,
+                    "hidden": false,
+                    "varType": "string",
+                    "currentValue": "$tag.app().url:string:\"\""
+                },
+                "restart": {
+                    "name": "restart",
+                    "type": "uiButton",
+                    "displayString": "Restart Display",
+                    "position": 1,
+                    "hidden": false,
+                    "currentValue": "$cmds.app().restart",
+                    "appKey": "$config.app().APP_KEY"
+                },
+                "diagnostics": {
+                    "name": "diagnostics",
+                    "type": "uiSubmodule",
+                    "displayString": "Diagnostics",
+                    "showActivity": true,
+                    "position": 61,
+                    "hidden": false,
+                    "children": {
+                        "display_found": {
+                            "name": "display_found",
+                            "type": "uiVariable",
+                            "displayString": "Display Detected",
+                            "showActivity": true,
+                            "position": 57,
+                            "hidden": false,
+                            "varType": "bool",
+                            "currentValue": "$tag.app().display_found:boolean:false"
+                        },
+                        "restarts": {
+                            "name": "restarts",
+                            "type": "uiVariable",
+                            "displayString": "Restarts",
+                            "showActivity": true,
+                            "position": 58,
+                            "hidden": false,
+                            "varType": "float",
+                            "currentValue": "$tag.app().restarts:number:0",
+                            "decPrecision": 0
+                        },
+                        "source_app": {
+                            "name": "source_app",
+                            "type": "uiVariable",
+                            "displayString": "Source App",
+                            "showActivity": true,
+                            "position": 59,
+                            "hidden": false,
+                            "varType": "string",
+                            "currentValue": "$tag.app().source_app:string:\"\""
+                        },
+                        "last_error": {
+                            "name": "last_error",
+                            "type": "uiVariable",
+                            "displayString": "Last Error",
+                            "showActivity": true,
+                            "position": 60,
+                            "hidden": false,
+                            "varType": "string",
+                            "currentValue": "$tag.app().last_error:string:\"\""
+                        }
+                    }
+                }
+            }
+        }
     }
 }
